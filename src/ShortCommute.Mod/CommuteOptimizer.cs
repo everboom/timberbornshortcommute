@@ -53,6 +53,12 @@ namespace SylvanGames.ShortCommute {
     /// <summary>Safety cap on cheap (cache-hit) workers processed per tick.</summary>
     private const int MaxWorkersPerTick = 64;
 
+    /// <summary>Dwellings within this many road-tiles of a filled one are treated as
+    /// the same block and share its distance row — one fill per block instead of per
+    /// dwelling. Kept below typical commute scale so the bounded approximation only
+    /// affects near-threshold moves. Set 0 to disable clustering (per-dwelling fills).</summary>
+    private const float ClusterRadius = 10f;
+
     #endregion
 
     #region State
@@ -65,7 +71,7 @@ namespace SylvanGames.ShortCommute {
     /// target set every dwelling row is measured against.</summary>
     private readonly List<Workplace> _workplaces = new();
 
-    private readonly DwellingRowCache _rows = new(MaxFillsPerTick);
+    private readonly DwellingRowCache _rows = new(MaxFillsPerTick, ClusterRadius);
 
     /// <summary>Per-worker scratch: candidate dwellings with their distance to the
     /// worker's workplace, reused to avoid per-call allocation.</summary>
@@ -119,6 +125,7 @@ namespace SylvanGames.ShortCommute {
       }
       _rows.ResetTickCounter();
       var dwellings = GetActiveDwellings(_districtCenter);
+      _rows.SetClusterDwellings(dwellings);
       var districtOverpopulated = DistrictOverpopulatedByAdults(_districtCenter, dwellings);
 
       var processed = 0;
