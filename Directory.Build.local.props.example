@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    Copy this to Directory.Build.local.props (gitignored) and edit for your machine.
+
+    Required:
+      TimberbornInstallDir  — root of your Timberborn install (contains
+                              Timberborn_Data\Managed\ with the game DLLs).
+    Optional:
+      ShortCommuteDeployDir — where the build copies the DLL + manifest.
+                              Default: %USERPROFILE%\Documents\Timberborn\Mods\ShortCommute
+  -->
+
+  <PropertyGroup>
+    <TimberbornInstallDir>C:\Path\To\Timberborn</TimberbornInstallDir>
+    <!-- <ShortCommuteDeployDir>C:\Custom\Mods\ShortCommute</ShortCommuteDeployDir> -->
+  </PropertyGroup>
+
+</Project>
