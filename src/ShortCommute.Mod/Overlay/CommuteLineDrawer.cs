@@ -32,6 +32,9 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// <summary>URP unlit shader name — present in any URP build.</summary>
     private const string UnlitShader = "Universal Render Pipeline/Unlit";
 
+    private static readonly int ZTestProperty = Shader.PropertyToID("_ZTest");
+    private static readonly int ZWriteProperty = Shader.PropertyToID("_ZWrite");
+
     #endregion
 
     #region State
@@ -119,6 +122,13 @@ namespace SylvanGames.ShortCommute.Overlay {
     private Material MaterialFor(Color color) {
       if (!_materials.TryGetValue(color, out var material)) {
         material = new Material(_shader) { color = color };
+        // Draw lines over the whole scene rather than letting terrain/buildings
+        // occlude them: ignore the depth test (ZTest Always), don't write depth,
+        // and render after opaque geometry. This is an analysis overlay, so a line
+        // that passes behind a hill should still read as "this house → that job".
+        material.SetFloat(ZTestProperty, (float)CompareFunction.Always);
+        material.SetFloat(ZWriteProperty, 0f);
+        material.renderQueue = (int)RenderQueue.Overlay;
         _materials[color] = material;
       }
       return material;
