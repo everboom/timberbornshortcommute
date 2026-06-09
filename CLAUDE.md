@@ -84,13 +84,22 @@ at `SylvanGames.ShortCommute.CommuteOptimizer` (`Tick` + `TryImprove`) and confi
 per-tick ms stays low (cache-hit ticks ~sub-ms, fresh-fill ticks a few ms),
 versus the ~9.5 s single spike the original produced.
 
+## Next feature — commute overlay
+
+The data layer (`CommuteCost`) is in; the **overlay UI that reads it is the active
+next feature**. Full design, UX decisions, rendering-mechanism research, open
+questions, and the verification gaps to clear first are in
+`docs/commute-overlay-plan.md` — **read it before starting overlay work.**
+
 ## Roadmap (deferred from v1 — add only if measured necessary)
 
 Event-driven scheduling (vs the daily full pass), finer road-change invalidation
-(vs clearing the row cache each pass), house clustering by road distance, and a
-settings UI for the tuning constants. The v1 levers (workplace rooting + per-tick
-budget) already flatten the frame; the rest optimizes steady-state work frequency
-for very large colonies.
+(vs clearing the row cache each pass), adaptive rooting (root at whichever of
+dwellings/workplaces is the smaller set), and a settings UI for the tuning
+constants. The v1 levers (dwelling rooting + per-tick budget + block clustering)
+already flatten the frame; the rest optimizes steady-state work frequency for very
+large colonies. (Block clustering, once listed here, has shipped — `ClusterRadius`
+in `CommuteOptimizer` / the clustering path in `DwellingRowCache`.)
 
 ## Don't lift the original's source
 

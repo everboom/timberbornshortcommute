@@ -44,7 +44,8 @@ displacing children) only when the district is adult-overpopulated. Jobs are
 never touched — only `Home` assignments — so beavers never drop work mid-shift.
 
 Tuning (hardcoded in v1, in `CommuteOptimizer`): `MinMoveImprovement = 4`,
-`MinSwapImprovement = 10`, `MaxFillsPerTick = 2`, `MaxWorkersPerTick = 64`.
+`MinSwapImprovement = 10`, `MaxFillsPerTick = 2`, `MaxWorkersPerTick = 64`,
+`ClusterRadius = 10` (road-tiles; dwellings within this share one fill — 0 disables).
 
 ## Install / use
 
@@ -67,20 +68,26 @@ dotnet build -p:ShortCommuteDeploy=false   # build only
 ## Status — v1
 
 Ships the levers that kill the freeze (dwelling-rooted cached explorations +
-hard per-tick budget) on top of a daily full pass. Deliberately **deferred** (not
-needed to flatten the frame, added only if profiling shows steady-state cost
-matters): event-driven scheduling instead of a daily sweep, finer road-change
-invalidation, house clustering (for the many-small-dwellings case), adaptive
-rooting (root at whichever of dwellings/workplaces is the smaller set), and a
-settings UI for the tuning knobs.
+hard per-tick budget + **block clustering**: dwellings within `ClusterRadius`
+road-tiles share one fill) on top of a daily full pass. Each `Worker` also carries
+a display-only `CommuteCost` (its last-measured home→job road distance), stamped as
+a free byproduct of the pass — the data source for the planned **commute overlay**
+(the active next feature; see `docs/commute-overlay-plan.md`).
+
+Deliberately **deferred** (not needed to flatten the frame, added only if profiling
+shows steady-state cost matters): event-driven scheduling instead of a daily sweep,
+finer road-change invalidation, adaptive rooting (root at whichever of
+dwellings/workplaces is the smaller set), and a settings UI for the tuning knobs.
 
 ## Layout
 
 ```
 ShortCommute.slnx
 ├── manifest.json                  mod manifest (Id SylvanGames.ShortCommute; no deps)
+├── docs/commute-overlay-plan.md   design & handoff for the next feature (the overlay)
 └── src/ShortCommute.Mod/
-    ├── ShortCommuteConfigurator.cs  Bindito wiring — decorates DistrictCenter
+    ├── ShortCommuteConfigurator.cs  Bindito wiring — decorates DistrictCenter + Worker; binds both
     ├── CommuteOptimizer.cs          per-district component: pass scheduling + move/swap logic
-    └── DwellingRowCache.cs          dwelling-rooted distance rows, reused per pass under a fill budget
+    ├── DwellingRowCache.cs          dwelling-rooted distance rows (+ block clustering), reused per pass under a fill budget
+    └── CommuteCost.cs               display-only per-Worker road distance, for the overlay (not read by the algorithm)
 ```
