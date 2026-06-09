@@ -1,6 +1,7 @@
 using Bindito.Core;
 using Timberborn.GameDistricts;
 using Timberborn.TemplateInstantiation;
+using Timberborn.WorkSystem;
 using UnityEngine;
 
 namespace SylvanGames.ShortCommute {
@@ -9,7 +10,9 @@ namespace SylvanGames.ShortCommute {
   /// Wires ShortCommute into the game. A <see cref="CommuteOptimizer"/> is
   /// attached to every <see cref="DistrictCenter"/> as a template decorator —
   /// the same clean extension point the vanilla district uses, so no Harmony
-  /// is required.
+  /// is required. A <see cref="CommuteCost"/> is attached to every
+  /// <see cref="Worker"/> so the optimizer can stamp each beaver's measured
+  /// work-path distance for the commute overlay to read.
   /// </summary>
   [Context("Game")]
   public class ShortCommuteConfigurator : Configurator {
@@ -18,12 +21,14 @@ namespace SylvanGames.ShortCommute {
     protected override void Configure() {
       Bind<CommuteOptimizer>().AsTransient();
       MultiBind<TemplateModule>().ToProvider(ProvideTemplateModule).AsSingleton();
-      Debug.Log("[ShortCommute] Configured — CommuteOptimizer decorates DistrictCenter.");
+      Debug.Log("[ShortCommute] Configured — CommuteOptimizer decorates DistrictCenter; "
+                + "CommuteCost decorates Worker.");
     }
 
     private static TemplateModule ProvideTemplateModule() {
       var builder = new TemplateModule.Builder();
       builder.AddDecorator<DistrictCenter, CommuteOptimizer>();
+      builder.AddDecorator<Worker, CommuteCost>();
       return builder.Build();
     }
 

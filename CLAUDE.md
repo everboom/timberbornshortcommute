@@ -55,6 +55,18 @@ working rules.
   `Configurator` + `TemplateModule.AddDecorator<DistrictCenter, CommuteOptimizer>`.
   We intentionally do **not** integrate BeaverGenders / faction building control
   (the user doesn't run them); don't add that surface without being asked.
+- **`CommuteCost` is display-only and a free byproduct — don't let it leak into the
+  algorithm.** A `CommuteCost` component is decorated onto every `Worker` and stamped
+  by the optimizer at `TryImprove`'s settle/move/swap exits with the beaver's
+  home→workplace road distance (a lookup it already has — no extra fills). It exists
+  purely for the planned commute overlay; the move/swap logic must never read it
+  back. Two deliberate inaccuracies, both documented in its XML doc and acceptable
+  *only because it's display*: (1) **block-resolution** — under clustering it's the
+  cluster rep's distance (±`ClusterRadius`), so same-block houses report identical
+  values; the overlay must use colour bands wider than the radius and reserve exact
+  per-beaver numbers for an on-select recompute. (2) **last-rebalance-stale** — it's
+  not reset at pass start (no flicker to "no data"), so it can lag a day. Not
+  persisted (recomputed each pass), so saves carry nothing new.
 
 ## Build / deploy
 

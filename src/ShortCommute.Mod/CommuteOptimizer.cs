@@ -222,10 +222,12 @@ namespace SylvanGames.ShortCommute {
 
       foreach (var (dwelling, distance) in _candidates) {
         if (dwelling == home) {
+          RecordCommute(worker, currentDistance); // staying put: own home is already closest
           return false; // reached our own home in nearest-first order: nothing closer remains
         }
         var improvement = currentDistance - distance;
         if (improvement < MinMoveImprovement) {
+          RecordCommute(worker, currentDistance); // no worthwhile move: keep current commute
           return false; // sorted nearest-first, so every remaining dwelling is at least as far
         }
 
@@ -235,6 +237,7 @@ namespace SylvanGames.ShortCommute {
             home!.UnassignDweller(dweller);
           }
           dwelling.AssignDweller(dweller);
+          RecordCommute(worker, distance); // moved: new commute is this candidate's distance
           return true;
         }
 
@@ -246,10 +249,18 @@ namespace SylvanGames.ShortCommute {
         // inconvenienced). Fill-free — all distances are lookups in rows we have.
         var partner = FindSwapCandidate(home!, dwelling, improvement, aggressive);
         if (partner != null) {
+          // home's row is cached (built when we read currentDistance above), so the
+          // partner's post-swap commute — they take our home — is a free lookup.
+          var homeRow = _rows.TryGetRow(home!, _workplaces);
           SwapHomes(dweller, partner);
+          RecordCommute(worker, distance); // worker now lives in the target dwelling
+          if (homeRow != null) {
+            RecordPartnerCommute(partner, homeRow); // partner now lives in our old home
+          }
           return true;
         }
       }
+      RecordCommute(worker, currentDistance); // exhausted candidates, nothing applied
       return false;
     }
 
@@ -306,6 +317,50 @@ namespace SylvanGames.ShortCommute {
         }
       }
       return best;
+    }
+
+    #endregion
+
+    #region Overlay data
+
+    /// <summary>
+    /// Stamp <paramref name="worker"/>'s <see cref="CommuteCost"/> with its freshly
+    /// settled home→workplace road distance, for the commute overlay to read.
+    /// <see cref="float.MaxValue"/> (no home / unreachable) is recorded as "no data".
+    /// Display-only and never read back by the optimizer; a worker missing the
+    /// component (it shouldn't — the decorator adds it to every <see cref="Worker"/>)
+    /// is simply skipped rather than crashing the tick over a cosmetic value.
+    /// </summary>
+    private static void RecordCommute(Worker worker, float roadDistance) {
+      var cost = worker.GetComponent<CommuteCost>();
+      if (cost == null) {
+        return;
+      }
+      if (roadDistance >= float.MaxValue) {
+        cost.Clear();
+      } else {
+        cost.Set(roadDistance);
+      }
+    }
+
+    /// <summary>
+    /// After a swap, stamp the partner's new commute: they have moved into
+    /// <paramref name="newHome"/>, so their home→job distance is a lookup of their
+    /// workplace column in that home's already-built row. An unemployed partner, or
+    /// a child swapped in aggressive mode (no <see cref="Worker"/>), records nothing.
+    /// </summary>
+    private static void RecordPartnerCommute(Dweller partner, DwellingRow newHome) {
+      var partnerWorker = partner.GetComponent<Worker>();
+      if (partnerWorker == null) {
+        return;
+      }
+      var partnerWorkplace = partnerWorker.Workplace;
+      var distance = float.MaxValue;
+      if (partnerWorkplace != null
+          && newHome.Distances.TryGetValue(partnerWorkplace, out var d)) {
+        distance = d;
+      }
+      RecordCommute(partnerWorker, distance);
     }
 
     #endregion
