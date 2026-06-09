@@ -20,6 +20,7 @@ namespace SylvanGames.ShortCommute {
     /// <inheritdoc />
     protected override void Configure() {
       Bind<CommuteOptimizer>().AsTransient();
+      Bind<CommuteCost>().AsTransient();
       MultiBind<TemplateModule>().ToProvider(ProvideTemplateModule).AsSingleton();
       Debug.Log("[ShortCommute] Configured — CommuteOptimizer decorates DistrictCenter; "
                 + "CommuteCost decorates Worker.");
