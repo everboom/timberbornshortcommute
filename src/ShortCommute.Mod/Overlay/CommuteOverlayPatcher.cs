@@ -48,11 +48,21 @@ namespace SylvanGames.ShortCommute.Overlay {
       if (_patched) {
         return;
       }
-      var harmony = new Harmony(HarmonyId);
-      PatchSuppression(harmony, "Timberborn.DistanceHeatmap.DistanceHeatmapShower", "ShowHeatmap");
-      PatchSuppression(harmony,
-          "Timberborn.MechanicalSystemHighlighting.MechanicalGraphHighlightService", "HighlightSelectedNode");
-      _patched = true;
+      try {
+        var harmony = new Harmony(HarmonyId);
+        var applied = 0;
+        applied += PatchSuppression(harmony,
+            "Timberborn.DistanceHeatmap.DistanceHeatmapShower", "ShowHeatmap") ? 1 : 0;
+        applied += PatchSuppression(harmony,
+            "Timberborn.MechanicalSystemHighlighting.MechanicalGraphHighlightService",
+            "HighlightSelectedNode") ? 1 : 0;
+        _patched = true;
+        Debug.Log($"[ShortCommute] Overlay suppression: applied {applied}/2 Harmony prefixes.");
+      } catch (System.Exception ex) {
+        // Loud, but non-fatal: the overlay still works, just without suppression.
+        Debug.LogError($"[ShortCommute] Overlay suppression patches failed to apply "
+                       + $"(is 0Harmony.dll loaded?): {ex}");
+      }
     }
 
     #endregion
@@ -62,20 +72,21 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// <summary>Prefix the named (instance, parameterless) method with the
     /// suppression gate. Fails loud — but non-fatally — if a game update renamed
     /// or moved the target: the overlay still works, just without suppression.</summary>
-    private static void PatchSuppression(Harmony harmony, string typeName, string methodName) {
+    private static bool PatchSuppression(Harmony harmony, string typeName, string methodName) {
       var type = AccessTools.TypeByName(typeName);
       if (type == null) {
         Debug.LogError($"[ShortCommute] Overlay suppression: type '{typeName}' not found — "
                        + "vanilla highlight will not be suppressed under the overlay.");
-        return;
+        return false;
       }
       var method = AccessTools.Method(type, methodName);
       if (method == null) {
         Debug.LogError($"[ShortCommute] Overlay suppression: method '{typeName}.{methodName}' not "
                        + "found — vanilla highlight will not be suppressed under the overlay.");
-        return;
+        return false;
       }
       harmony.Patch(method, prefix: new HarmonyMethod(SkipWhenOverlayActiveMethod));
+      return true;
     }
 
     private static readonly MethodInfo SkipWhenOverlayActiveMethod =

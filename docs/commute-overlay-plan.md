@@ -107,11 +107,17 @@ unaffected.
   lines.** So our lines are a code-only `LineRenderer` with a runtime
   `new Material(Shader.Find("Universal Render Pipeline/Unlit"))`, **one material
   per colour band**, solid-coloured per line (set `material.color`; avoid the
-  vertex-colour gradient path, which URP/Unlit ignores). This is a well-trodden
-  Unity-modding pattern but is **the feature's one unproven primitive** — it is
-  built first as a spike (a single hardcoded line in-game) before the rest is
-  wired to it. Fallback if it fails: the power-network pattern — secondary-
-  highlight the connected entities instead of drawing lines.
+  vertex-colour gradient path, which URP/Unlit ignores). **Verified in-game: lines
+  render and colour correctly.**
+  - **Known limitation — no always-on-top.** Lines are depth-tested, so terrain
+    and buildings occlude them. URP's Unlit shader **ignores the `_ZTest` material
+    property** (setting `_ZTest = Always` + Overlay render queue had no effect
+    in-game), so an overlay-style "draw over everything" line is *not* reachable
+    through this material. The real options, both deferred pending a call: (a) `GL`
+    immediate-mode drawing each frame with a depth-ignoring material (e.g.
+    `Hidden/Internal-Colored`) — always-on-top but thin (1px) lines and a camera
+    hook; (b) bundle a custom always-on-top shader — which means shipping an asset
+    bundle, reversing the code-only stance. For now lines stay depth-tested.
 - **Path geometry exists.** `Accessible.FindRoadPath(out distance)` returns only
   the scalar the optimizer uses. `Accessible.FindPathUnlimitedRange(Vector3 start,
   List<PathCorner> corners, out distance)` fills in geometry (`PathCorner.Position`,

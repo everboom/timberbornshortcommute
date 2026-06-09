@@ -59,6 +59,11 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// <summary>True while the overlay is actively drawing (toggle on).</summary>
     private bool _active;
 
+    /// <summary>True while an entity is selected. The whole-map heatmap is the
+    /// <em>nothing-selected</em> state; once something is selected we hide it and
+    /// draw only that selection's lines/path, so the selection reads clearly.</summary>
+    private bool _hasSelection;
+
     /// <summary>Dwellings we have secondary-highlighted, and the band colour each
     /// currently shows — so we only re-highlight on a band change.</summary>
     private readonly Dictionary<Dwelling, Color> _highlighted = new();
@@ -93,11 +98,20 @@ namespace SylvanGames.ShortCommute.Overlay {
           // Suppress the vanilla distance/power secondary highlights while we draw
           // (see CommuteOverlayPatcher), then pick up any existing selection.
           CommuteOverlaySuppression.Active = true;
-          RedrawSelection();
+          var selected = _selectionService.SelectedObject;
+          _hasSelection = selected != null;
+          if (selected != null) {
+            DrawForSelection(selected);
+          }
         }
-        RefreshHeatmap();
+        // Heatmap is the nothing-selected view; while something is selected we show
+        // only its lines (kept fresh by the selection events, not redrawn here).
+        if (!_hasSelection) {
+          RefreshHeatmap();
+        }
       } else if (_active) {
         _active = false;
+        _hasSelection = false;
         CommuteOverlaySuppression.Active = false;
         ClearAll();
       }
@@ -109,20 +123,19 @@ namespace SylvanGames.ShortCommute.Overlay {
 
     [OnEvent]
     public void OnObjectSelected(SelectableObjectSelectedEvent selectedEvent) {
-      if (_active) {
-        DrawForSelection(selectedEvent.SelectableObject);
+      if (!_active) {
+        return;
       }
+      _hasSelection = true;
+      ClearHeatmap(); // drop the whole-map heatmap so only this selection shows
+      DrawForSelection(selectedEvent.SelectableObject);
     }
 
     [OnEvent]
-    public void OnObjectUnselected(SelectableObjectUnselectedEvent unselectedEvent) =>
-        _lines.Clear();
-
-    private void RedrawSelection() {
-      var selected = _selectionService.SelectedObject;
-      if (selected != null) {
-        DrawForSelection(selected);
-      }
+    public void OnObjectUnselected(SelectableObjectUnselectedEvent unselectedEvent) {
+      _hasSelection = false;
+      _lines.Clear();
+      // The heatmap is restored on the next UpdateSingleton (nothing selected).
     }
 
     /// <summary>Dispatch by what was selected — beaver, house, or workplace.</summary>
@@ -246,11 +259,16 @@ namespace SylvanGames.ShortCommute.Overlay {
     #region Helpers
 
     private void ClearAll() {
+      ClearHeatmap();
+      _lines.Clear();
+    }
+
+    /// <summary>Remove every dwelling secondary-highlight we applied.</summary>
+    private void ClearHeatmap() {
       foreach (var dwelling in _highlighted.Keys) {
         _highlighter.UnhighlightSecondary(dwelling);
       }
       _highlighted.Clear();
-      _lines.Clear();
     }
 
     /// <summary>World-space line endpoint for a building: its grounded centre,
