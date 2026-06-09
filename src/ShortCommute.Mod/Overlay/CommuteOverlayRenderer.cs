@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using HarmonyLib;
 using Timberborn.BaseComponentSystem;
 using Timberborn.BlockSystem;
+using Timberborn.BlueprintSystem;
 using Timberborn.DwellingSystem;
 using Timberborn.EntitySystem;
 using Timberborn.Navigation;
@@ -18,13 +20,18 @@ namespace SylvanGames.ShortCommute.Overlay {
   ///   <item><b>Nothing selected</b> — a whole-map heatmap: every dwelling is
   ///   secondary-highlighted with the band of its <em>worst</em> occupant's
   ///   commute (<see cref="CommuteBands"/>).</item>
-  ///   <item><b>House selected</b> — straight coloured lines to each workplace
-  ///   its occupants work at.</item>
+  ///   <item><b>House selected</b> — straight coloured lines to each workplace its
+  ///   occupants work at, with those workplaces light-blue-highlighted.</item>
   ///   <item><b>Workplace selected</b> — straight coloured lines to the homes its
-  ///   workers live in.</item>
-  ///   <item><b>Beaver selected</b> — the walked path from its home to its
-  ///   workplace (one pathfind, off the optimizer's tick path).</item>
+  ///   workers live in, with those homes light-blue-highlighted.</item>
+  ///   <item><b>Beaver selected</b> — its home and workplace light-blue-highlighted
+  ///   and connected by the walked path (a straight line if the path can't be
+  ///   built); one pathfind, off the optimizer's tick path.</item>
   /// </list>
+  ///
+  /// <para>Link highlights reuse the vanilla power-network highlight colour
+  /// (resolved from its spec) on the same <c>Secondary</c> layer; while anything is
+  /// selected the whole-map heatmap is cleared, so the two never overlap.</para>
   ///
   /// <para>The heatmap uses an isolated <see cref="Highlighter"/> instance (bound
   /// transient, so ours is our own) writing the <c>Secondary</c> layer — the same
@@ -41,6 +48,15 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// just above the ground instead of z-fighting terrain.</summary>
     private const float LineHeight = 0.5f;
 
+    /// <summary>Light blue used to highlight the entities linked to the current
+    /// selection (a house's workplaces, a workplace's homes, a beaver's pair).
+    /// Resolved from the vanilla power-network spec at runtime to match it
+    /// exactly; this is the fallback if that lookup fails.</summary>
+    private static readonly Color FallbackLinkColor = new(0.40f, 0.78f, 1f, 1f);
+
+    private const string LinkColorSpecType =
+        "Timberborn.MechanicalSystemHighlighting.MechanicalNodeHighlighterSpec";
+
     #endregion
 
     #region Dependencies
@@ -50,6 +66,8 @@ namespace SylvanGames.ShortCommute.Overlay {
     private readonly EntitySelectionService _selectionService;
     private readonly CommuteLineDrawer _lines;
     private readonly Highlighter _highlighter;
+    private readonly ISpecService _specService;
+    private readonly CommuteOverlaySettings _settings;
     private readonly EventBus _eventBus;
 
     #endregion
@@ -68,6 +86,15 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// currently shows — so we only re-highlight on a band change.</summary>
     private readonly Dictionary<Dwelling, Color> _highlighted = new();
 
+    /// <summary>Entities we have light-blue-highlighted for the current selection
+    /// (its linked workplaces/homes/endpoints), so we can clear them when the
+    /// selection changes. Disjoint from <see cref="_highlighted"/> — the heatmap is
+    /// cleared while anything is selected.</summary>
+    private readonly HashSet<BaseComponent> _selectionHighlights = new();
+
+    /// <summary>Cached link-highlight colour (resolved lazily on first selection).</summary>
+    private Color? _linkColor;
+
     /// <summary>Reusable buffers for the beaver path draw (avoid per-select alloc).</summary>
     private readonly List<PathCorner> _cornerBuffer = new();
     private readonly List<Vector3> _pathBuffer = new();
@@ -76,12 +103,14 @@ namespace SylvanGames.ShortCommute.Overlay {
 
     public CommuteOverlayRenderer(CommuteOverlayToggle toggle, EntityComponentRegistry entityRegistry,
         EntitySelectionService selectionService, CommuteLineDrawer lines, Highlighter highlighter,
-        EventBus eventBus) {
+        ISpecService specService, CommuteOverlaySettings settings, EventBus eventBus) {
       _toggle = toggle;
       _entityRegistry = entityRegistry;
       _selectionService = selectionService;
       _lines = lines;
       _highlighter = highlighter;
+      _specService = specService;
+      _settings = settings;
       _eventBus = eventBus;
     }
 
@@ -93,6 +122,9 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// <inheritdoc />
     public void UpdateSingleton() {
       if (_toggle.Enabled) {
+        // Mirror the opt-in setting live so the path-range suppression prefix
+        // (CommuteOverlayPatcher) tracks toggles without a reload.
+        CommuteOverlaySuppression.HidePathRange = _settings.HidePathRangeOverlay.Value;
         if (!_active) {
           _active = true;
           // Suppress the vanilla distance/power secondary highlights while we draw
@@ -134,13 +166,14 @@ namespace SylvanGames.ShortCommute.Overlay {
     [OnEvent]
     public void OnObjectUnselected(SelectableObjectUnselectedEvent unselectedEvent) {
       _hasSelection = false;
-      _lines.Clear();
+      ClearSelection();
       // The heatmap is restored on the next UpdateSingleton (nothing selected).
     }
 
-    /// <summary>Dispatch by what was selected — beaver, house, or workplace.</summary>
+    /// <summary>Dispatch by what was selected — beaver, house, or workplace. Each
+    /// case draws connector lines and light-blue-highlights the linked entities.</summary>
     private void DrawForSelection(SelectableObject selectable) {
-      _lines.Clear();
+      ClearSelection();
       if (selectable == null) {
         return;
       }
@@ -213,6 +246,7 @@ namespace SylvanGames.ShortCommute.Overlay {
           continue;
         }
         _lines.DrawSegment(origin, target, LineColor(worker));
+        HighlightLink(workplace); // light up each workplace this house's beavers serve
       }
     }
 
@@ -227,31 +261,46 @@ namespace SylvanGames.ShortCommute.Overlay {
           continue;
         }
         _lines.DrawSegment(origin, target, LineColor(worker));
+        HighlightLink(dweller.Home); // light up each home this workplace draws from
       }
     }
 
+    /// <summary>Highlight the selected beaver's home and workplace, and connect them
+    /// with the walked road path — or, if that path can't be built, a straight line,
+    /// so a beaver's commute always renders something.</summary>
     private void DrawBeaverPath(Worker worker) {
       var workplace = worker.Workplace;
       if (workplace == null) {
         return; // unemployed beaver: no commute to draw
       }
       var dweller = worker.GetComponent<Dweller>();
-      if (dweller == null || !dweller.HasHome || dweller.HomeAccess is not { } start) {
+      if (dweller == null || !dweller.HasHome) {
         return;
       }
-      var workplaceAccessible = workplace.GetEnabledComponent<Accessible>();
-      if (workplaceAccessible == null) {
-        return;
+      var home = dweller.Home;
+      HighlightLink(home);
+      HighlightLink(workplace);
+      var color = LineColor(worker);
+
+      // Preferred: the actual walked path (one pathfind, off the optimizer's tick path).
+      if (dweller.HomeAccess is { } start
+          && workplace.GetEnabledComponent<Accessible>() is { } workplaceAccessible) {
+        _cornerBuffer.Clear();
+        if (workplaceAccessible.FindPathUnlimitedRange(start, _cornerBuffer, out _)
+            && _cornerBuffer.Count >= 2) {
+          _pathBuffer.Clear();
+          foreach (var corner in _cornerBuffer) {
+            _pathBuffer.Add(corner.Position + Vector3.up * LineHeight);
+          }
+          _lines.DrawPolyline(_pathBuffer, color);
+          return;
+        }
       }
-      _cornerBuffer.Clear();
-      if (!workplaceAccessible.FindPathUnlimitedRange(start, _cornerBuffer, out _)) {
-        return;
+
+      // Fallback: a straight connector between the two centres.
+      if (Center(home) is { } a && Center(workplace) is { } b) {
+        _lines.DrawSegment(a, b, color);
       }
-      _pathBuffer.Clear();
-      foreach (var corner in _cornerBuffer) {
-        _pathBuffer.Add(corner.Position + Vector3.up * LineHeight);
-      }
-      _lines.DrawPolyline(_pathBuffer, LineColor(worker));
     }
 
     #endregion
@@ -260,7 +309,7 @@ namespace SylvanGames.ShortCommute.Overlay {
 
     private void ClearAll() {
       ClearHeatmap();
-      _lines.Clear();
+      ClearSelection();
     }
 
     /// <summary>Remove every dwelling secondary-highlight we applied.</summary>
@@ -269,6 +318,53 @@ namespace SylvanGames.ShortCommute.Overlay {
         _highlighter.UnhighlightSecondary(dwelling);
       }
       _highlighted.Clear();
+    }
+
+    /// <summary>Clear the current selection's lines and link highlights.</summary>
+    private void ClearSelection() {
+      _lines.Clear();
+      foreach (var entity in _selectionHighlights) {
+        _highlighter.UnhighlightSecondary(entity);
+      }
+      _selectionHighlights.Clear();
+    }
+
+    /// <summary>Light-blue-highlight an entity linked to the current selection
+    /// (idempotent within a selection — re-highlighting the same entity is a no-op).</summary>
+    private void HighlightLink(BaseComponent entity) {
+      if (_selectionHighlights.Add(entity)) {
+        _highlighter.HighlightSecondary(entity, LinkColor());
+      }
+    }
+
+    /// <summary>The link-highlight colour — the vanilla power-network highlight
+    /// colour (<c>MechanicalNodeHighlighterSpec.HighlightColor</c>), read once via
+    /// the spec service so it matches exactly. Falls back to
+    /// <see cref="FallbackLinkColor"/> (and warns) if that internal spec can't be
+    /// resolved on a future game version.</summary>
+    private Color LinkColor() {
+      if (_linkColor is { } cached) {
+        return cached;
+      }
+      var color = FallbackLinkColor;
+      try {
+        var specType = AccessTools.TypeByName(LinkColorSpecType);
+        if (specType == null) {
+          Debug.LogWarning($"[ShortCommute] '{LinkColorSpecType}' not found; using fallback link colour.");
+        } else {
+          var spec = AccessTools.Method(typeof(ISpecService), nameof(ISpecService.GetSingleSpec))
+              .MakeGenericMethod(specType).Invoke(_specService, null);
+          var property = AccessTools.Property(specType, "HighlightColor");
+          if (spec != null && property != null) {
+            color = (Color)property.GetValue(spec);
+          }
+        }
+      } catch (System.Exception ex) {
+        Debug.LogWarning($"[ShortCommute] Could not read vanilla highlight colour, "
+                         + $"using fallback: {ex.Message}");
+      }
+      _linkColor = color;
+      return color;
     }
 
     /// <summary>World-space line endpoint for a building: its grounded centre,

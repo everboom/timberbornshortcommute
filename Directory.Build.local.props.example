@@ -6,6 +6,11 @@
     Required:
       TimberbornInstallDir  — root of your Timberborn install (contains
                               Timberborn_Data\Managed\ with the game DLLs).
+      ModSettingsDir        — the eMka.ModSettings mod's Scripts folder (contains
+                              ModSettings.Core.dll / ModSettings.Common.dll),
+                              referenced compile-only for the in-game settings
+                              toggle. It's a Workshop dependency, e.g.
+                              <steam>\workshop\content\1062090\<id>\version-1.0\Scripts.
     Optional:
       ShortCommuteDeployDir — where the build copies the DLL + manifest.
                               Default: %USERPROFILE%\Documents\Timberborn\Mods\ShortCommute
@@ -13,6 +18,7 @@
 
   <PropertyGroup>
     <TimberbornInstallDir>C:\Path\To\Timberborn</TimberbornInstallDir>
+    <ModSettingsDir>C:\Path\To\workshop\content\1062090\&lt;id&gt;\version-1.0\Scripts</ModSettingsDir>
     <!-- <ShortCommuteDeployDir>C:\Custom\Mods\ShortCommute</ShortCommuteDeployDir> -->
   </PropertyGroup>
 

@@ -44,6 +44,19 @@
     <PackageReference Include="Lib.Harmony" Version="2.3.3" GeneratePathProperty="true" />
   </ItemGroup>
 
+  <!-- eMka.ModSettings: referenced compile-only (Core = owner + setting types,
+       Common = range/limited-value settings). Declared as a RequiredMod in
+       manifest.json so the player's installed ModSettings mod provides the runtime
+       DLLs; Private=false because we don't bundle them. Powers the in-game
+       "hide path-range overlay" toggle (Overlay/CommuteOverlaySettings.cs). -->
+  <ItemGroup Label="ModSettings"
+             Condition="'$(ModSettingsDir)' != '' AND Exists('$(ModSettingsDir)\ModSettings.Core.dll')">
+    <Reference Include="$(ModSettingsDir)\ModSettings.Core.dll;$(ModSettingsDir)\ModSettings.Common.dll">
+      <Private>false</Private>
+      <SpecificVersion>false</SpecificVersion>
+    </Reference>
+  </ItemGroup>
+
   <Target Name="ValidateTimberbornInstall" BeforeTargets="ResolveAssemblyReferences">
     <Error
       Condition="'$(TimberbornInstallDir)' == ''"
@@ -51,6 +64,9 @@
     <Error
       Condition="'$(TimberbornInstallDir)' != '' AND !Exists('$(TimberbornManagedDir)')"
       Text="Timberborn Managed directory not found at '$(TimberbornManagedDir)'. Check that TimberbornInstallDir ('$(TimberbornInstallDir)') points at the root of your Timberborn install (the folder containing Timberborn_Data\Managed\)." />
+    <Error
+      Condition="'$(ModSettingsDir)' == '' OR !Exists('$(ModSettingsDir)\ModSettings.Core.dll')"
+      Text="ModSettingsDir is not set or ModSettings.Core.dll was not found at '$(ModSettingsDir)'. Set ModSettingsDir in Directory.Build.local.props to the eMka.ModSettings mod's Scripts folder (a Workshop dependency) — see Directory.Build.local.props.example." />
   </Target>
 
   <!-- After build, drop the mod DLL + manifest into the Mods folder. Disable with -p:ShortCommuteDeploy=false. -->

@@ -4,5 +4,10 @@
   "Id": "SylvanGames.ShortCommute",
   "MinimumGameVersion": "1.0.0.0",
   "Description": "Keeps employed beavers housed close to their workplace by road distance. A performance-focused reimplementation of the commute-balancing idea: distance work is rooted at the workplace and cached, and reassignment is spread under a per-tick budget so there is no day-start stall.",
-  "RequiredMods": []
+  "RequiredMods": [
+    {
+      "Id": "eMka.ModSettings",
+      "MinimumVersion": "1.0.13.0"
+    }
+  ]
 }

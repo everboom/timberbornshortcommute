@@ -10,11 +10,13 @@ Full design and the verified game APIs it stands on are in
 |---|---|
 | `CommuteOverlayConfigurator.cs` | `[Context("Game")]` Bindito wiring: binds the overlay singletons. No decorators (the overlay only *reads* `CommuteCost`). |
 | `CommuteOverlayToggle.cs` | `ILoadableSingleton`. The top-right `Common/SquareToggle` button; exposes `Enabled`. No custom icon (we ship no asset bundle) — vanilla checkmark + plain-text tooltip. |
-| `CommuteOverlayRenderer.cs` | `ILoadableSingleton` + `IUpdatableSingleton`. The brain: per-frame heatmap refresh while enabled, and selection-driven line/path draws via the `EventBus` selection events. Reads `CommuteCost`; never mutates game state. Sets `CommuteOverlaySuppression.Active`. |
+| `CommuteOverlayRenderer.cs` | `ILoadableSingleton` + `IUpdatableSingleton`. The brain: per-frame heatmap refresh while enabled, and selection-driven line/path draws via the `EventBus` selection events. Reads `CommuteCost`; never mutates game state. Sets `CommuteOverlaySuppression.Active` and mirrors the opt-in setting into `.HidePathRange`. |
 | `CommuteLineDrawer.cs` | Pooled Unity `LineRenderer`s with a runtime URP/Unlit material per band colour. The one rendering primitive with no in-game precedent (the spike); fails loudly if the URP shader is missing. |
 | `CommuteBands.cs` | Maps a road distance to a discrete band `Color` (or `null` = no data). Cutoffs are placeholder pending a real CSV capture. |
-| `CommuteOverlayPatcher.cs` | `ILoadableSingleton`. Applies the mod's **only** Harmony patches: two flag-gated prefixes that suppress vanilla selection highlights (`DistanceHeatmapShower.ShowHeatmap`, `MechanicalGraphHighlightService.HighlightSelectedNode`) while the overlay is on, so they don't overwrite/clutter the overlay's own secondary highlights. Inert when the overlay is off. |
-| `CommuteOverlaySuppression.cs` | Static `Active` flag the patcher's prefixes read; written by the renderer. |
+| `CommuteOverlayPatcher.cs` | `ILoadableSingleton`. Applies the mod's **only** Harmony patches: three flag-gated prefixes. Two suppress vanilla selection highlights (`DistanceHeatmapShower.ShowHeatmap`, `MechanicalGraphHighlightService.HighlightSelectedNode`) while the overlay is on. The third suppresses the vanilla path-range mesh (`DistrictPathNavRangeDrawer.LateUpdate` — a heavy per-frame rebuild) when the overlay is on **and** the player opt-in is set. Inert when the overlay is off. |
+| `CommuteOverlaySuppression.cs` | Static `Active` + `HidePathRange` flags the patcher's prefixes read; written by the renderer. |
+| `CommuteOverlaySettings.cs` | `ModSettingsOwner` (eMka.ModSettings). One toggle, `HidePathRangeOverlay` (**on** by default), shown in the game's Mods settings panel. Literal text, no loc file. Only applies while the overlay is active, so it's vanilla-neutral when the overlay is off. |
+| `CommuteOverlaySettingsConfigurator.cs` | `[Context("MainMenu")][Context("Game")]` — binds the settings owner in both scopes so the panel finds it from either, without dragging the Game-only overlay singletons into MainMenu. |
 
 ## How it draws (by selection)
 
@@ -40,6 +42,11 @@ all highlights and lines and prevents the path recompute from firing at all.
   Harmony patches only *suppress* vanilla highlights; they mutate no game state.)
 - **No asset bundle.** Everything is code-only: vanilla UI prefabs, runtime
   materials, the game's own highlight render pass.
-- **Harmony is surgical and flag-gated.** Two prefixes, suppression only, inert
-  while the overlay is off. Don't broaden the patch surface; prefer a Bindito hook
-  wherever one exists (the rest of the mod uses no Harmony at all).
+- **Harmony is surgical and flag-gated.** Three prefixes, suppression only, inert
+  while the overlay is off. The path-range one is additionally behind a player
+  opt-in (the vanilla mesh it hides is a useful feature, just a heavy one). Don't
+  broaden the patch surface; prefer a Bindito hook wherever one exists (the rest of
+  the mod uses no Harmony at all).
+- **`eMka.ModSettings` is the overlay's one dependency.** Only for the in-game
+  toggle. Compile-only reference via `$(ModSettingsDir)`; declared as a `RequiredMod`
+  in `manifest.json` so the player's installed mod provides the runtime DLLs.

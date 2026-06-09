@@ -17,6 +17,14 @@ namespace SylvanGames.ShortCommute.Overlay {
     /// should be suppressed.</summary>
     public static bool Active { get; set; }
 
+    /// <summary>Mirrors the opt-in <c>HidePathRangeOverlay</c> setting
+    /// (<see cref="CommuteOverlaySettings"/>). When this and <see cref="Active"/>
+    /// are both true, the vanilla path/nav range mesh
+    /// (<c>DistrictPathNavRangeDrawer</c>) is suppressed — it's the heavy
+    /// per-frame rebuild, so it's gated behind a player opt-in rather than
+    /// suppressed unconditionally like the lighter selection highlights.</summary>
+    public static bool HidePathRange { get; set; }
+
   }
 
 }

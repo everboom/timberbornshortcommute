@@ -55,15 +55,28 @@ working rules.
   integration.** The core hooks in cleanly via a Bindito `Configurator` +
   `TemplateModule.AddDecorator<DistrictCenter, CommuteOptimizer>` — no patching.
   Harmony *is* now used, but only where there's no clean extension point and only
-  as narrow, flag-gated prefixes: the overlay's two suppressions of vanilla
-  selection highlights (`DistanceHeatmapShower.ShowHeatmap`,
-  `MechanicalGraphHighlightService.HighlightSelectedNode` — see
-  `Overlay/CommuteOverlayPatcher.cs`). `0Harmony.dll` is **bundled** into the mod
-  folder (no external `RequiredMods`; still removable by deleting the folder).
-  Don't reach for Harmony when a Bindito/decorator hook exists, and don't broaden
-  the patch surface (transpilers, behaviour rewrites) without being asked. We
-  intentionally do **not** integrate BeaverGenders / faction building control
-  (the user doesn't run them); don't add that surface without being asked.
+  as narrow, flag-gated prefixes (`Overlay/CommuteOverlayPatcher.cs`): two that
+  suppress vanilla selection highlights while the overlay is active
+  (`DistanceHeatmapShower.ShowHeatmap`,
+  `MechanicalGraphHighlightService.HighlightSelectedNode`, gated on
+  `CommuteOverlaySuppression.Active`); and a third that suppresses the vanilla
+  path-range mesh (`DistrictPathNavRangeDrawer.LateUpdate` — a heavy per-frame
+  rebuild profiled at ~17 ms+ on large path networks), gated on `Active` **and**
+  the player toggle `HidePathRange` (on by default — only ever applies while the
+  overlay is active, so vanilla is untouched with the overlay off). `0Harmony.dll` is **bundled**
+  into the mod folder (so Harmony is not a `RequiredMods` entry; deleting the folder
+  removes the mod). Don't reach for Harmony when a Bindito/decorator hook exists,
+  and don't broaden the patch surface (transpilers, behaviour rewrites) without
+  being asked. We intentionally do **not** integrate BeaverGenders / faction
+  building control (the user doesn't run them); don't add that surface without being asked.
+- **One `RequiredMods` dependency: `eMka.ModSettings`** (the overlay's in-game
+  settings toggle). It's referenced compile-only via `$(ModSettingsDir)` (set in
+  `Directory.Build.local.props`); the player's installed ModSettings mod provides
+  the runtime DLLs. The settings owner (`Overlay/CommuteOverlaySettings.cs`) is
+  bound in a dedicated `[Context("MainMenu")][Context("Game")]` configurator so the
+  MainMenu binding is scoped to just the owner (the main overlay configurator stays
+  Game-only). This is the mod's only external dependency — don't add more without
+  being asked.
 - **`CommuteCost` is display-only and a free byproduct — don't let it leak into the
   algorithm.** A `CommuteCost` component is decorated onto every `Worker` and stamped
   by the optimizer at `TryImprove`'s settle/move/swap exits with the beaver's

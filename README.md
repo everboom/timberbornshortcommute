@@ -51,7 +51,9 @@ Tuning (hardcoded in v1, in `CommuteOptimizer`): `MinMoveImprovement = 4`,
 
 - **Disable any other commute-balancer mod.** Two mods both reassigning homes on
   `DistrictCenter` will fight.
-- No dependencies (no Harmony, no TimberUi) — pure Bindito + vanilla navigation.
+- **Requires the `eMka.ModSettings` mod** (for the commute overlay's in-game
+  settings toggle). Harmony is bundled, not a dependency. The core optimizer is
+  still pure Bindito + vanilla navigation; the dependency is the overlay's only one.
 - Build deploys to `%USERPROFILE%\Documents\Timberborn\Mods\ShortCommute`.
 
 ## Build
@@ -83,7 +85,7 @@ dwellings/workplaces is the smaller set), and a settings UI for the tuning knobs
 
 ```
 ShortCommute.slnx
-├── manifest.json                  mod manifest (Id SylvanGames.ShortCommute; no deps)
+├── manifest.json                  mod manifest (Id SylvanGames.ShortCommute; requires eMka.ModSettings)
 ├── docs/commute-overlay-plan.md   design & handoff for the next feature (the overlay)
 └── src/ShortCommute.Mod/
     ├── ShortCommuteConfigurator.cs  Bindito wiring — decorates DistrictCenter + Worker; binds both
