@@ -12,9 +12,11 @@
 
   <!--
     Game / engine references resolved from the local Timberborn install. NOT
-    redistributed (Private=false) — Timberborn provides them at load time. No
-    Harmony: this mod hooks in via a Bindito Configurator + TemplateModule
-    decorator, the same clean extension point the vanilla DistrictCenter uses.
+    redistributed (Private=false) — Timberborn provides them at load time. The mod
+    hooks in via a Bindito Configurator + TemplateModule decorator (the clean
+    extension point the vanilla DistrictCenter uses); Harmony is used only for two
+    surgical prefixes that suppress vanilla selection highlights while the commute
+    overlay is on (see Overlay/CommuteOverlayPatcher.cs).
   -->
   <ItemGroup Label="Timberborn DLLs">
     <Reference Include="$(TimberbornManagedDir)\Timberborn.*.dll">
@@ -34,6 +36,14 @@
     </Reference>
   </ItemGroup>
 
+  <!-- Harmony, bundled: 0Harmony.dll is deployed into the mod folder from the
+       package (see DeployShortCommute). Not an external RequiredMods dependency;
+       the mod stays removable by deleting the folder. GeneratePathProperty exposes
+       $(PkgLib_Harmony) for the deploy copy. -->
+  <ItemGroup Label="Harmony">
+    <PackageReference Include="Lib.Harmony" Version="2.3.3" GeneratePathProperty="true" />
+  </ItemGroup>
+
   <Target Name="ValidateTimberbornInstall" BeforeTargets="ResolveAssemblyReferences">
     <Error
       Condition="'$(TimberbornInstallDir)' == ''"
@@ -47,6 +57,7 @@
   <Target Name="DeployShortCommute" AfterTargets="Build" Condition="'$(ShortCommuteDeploy)' != 'false'">
     <ItemGroup>
       <_ShortCommuteDeployFile Include="$(TargetDir)SylvanGames.ShortCommute.dll" />
+      <_ShortCommuteDeployFile Include="$(PkgLib_Harmony)\lib\net472\0Harmony.dll" />
       <_ShortCommuteDeployFile Include="$(MSBuildThisFileDirectory)..\..\manifest.json" />
     </ItemGroup>
     <MakeDir Directories="$(ShortCommuteDeployDir)" />

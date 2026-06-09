@@ -9,8 +9,9 @@ namespace SylvanGames.ShortCommute {
   /// <summary>
   /// Wires ShortCommute into the game. A <see cref="CommuteOptimizer"/> is
   /// attached to every <see cref="DistrictCenter"/> as a template decorator —
-  /// the same clean extension point the vanilla district uses, so no Harmony
-  /// is required. A <see cref="CommuteCost"/> is attached to every
+  /// the same clean extension point the vanilla district uses, so the core needs
+  /// no Harmony (the overlay uses two narrow, flag-gated Harmony prefixes — see
+  /// <c>Overlay/CommuteOverlayPatcher.cs</c>). A <see cref="CommuteCost"/> is attached to every
   /// <see cref="Worker"/> so the optimizer can stamp each beaver's measured
   /// work-path distance for the commute overlay to read.
   /// </summary>

@@ -90,11 +90,15 @@ namespace SylvanGames.ShortCommute.Overlay {
       if (_toggle.Enabled) {
         if (!_active) {
           _active = true;
-          RedrawSelection(); // pick up whatever is already selected when mode turns on
+          // Suppress the vanilla distance/power secondary highlights while we draw
+          // (see CommuteOverlayPatcher), then pick up any existing selection.
+          CommuteOverlaySuppression.Active = true;
+          RedrawSelection();
         }
         RefreshHeatmap();
       } else if (_active) {
         _active = false;
+        CommuteOverlaySuppression.Active = false;
         ClearAll();
       }
     }

@@ -50,6 +50,35 @@ When the toggle is **off**: no heatmap, no lines, and the on-select path recompu
 physically can't fire — its (small) cost can never surprise the player. Not
 game-progression-gated; it's an analysis tool.
 
+### Suppressing the two vanilla selection highlights (Harmony, surgical)
+
+Selecting a building normally fires two vanilla highlighters that both paint the
+**same `Secondary` layer the overlay uses**, so they clutter — and can overwrite —
+the overlay's own colours:
+
+- **`DistanceHeatmapShower.ShowHeatmap`** — decorated on every building with a path
+  range (`BlockObjectWithPathRangeSpec`); on select it `HighlightSecondary`s every
+  building in the district coloured by road distance from the selected one. This is
+  the "distances to all workplaces" heatmap seen when selecting a dwelling.
+- **`MechanicalGraphHighlightService.HighlightSelectedNode`** — on selecting a
+  powered building, walks the power graph and `HighlightSecondary`s every connected
+  node.
+
+Neither has a Bindito/decorator off-switch (both are `internal`, selection-event
+driven), so they're suppressed with **two flag-gated Harmony prefixes**
+(`Overlay/CommuteOverlayPatcher.cs`): each returns `false` (skips the original)
+only while `CommuteOverlaySuppression.Active` is set — which the renderer sets for
+exactly as long as the overlay is on. Off → the prefix returns `true` and vanilla
+behaves normally. This is the mod's **only** use of Harmony, kept to the "surgical
+strike, not broad strokes" bar: two named methods, suppression only, no behaviour
+rewrite. `0Harmony.dll` is **bundled** in the mod folder (no external
+`RequiredMods`; removable by deleting the folder).
+
+Known minor edge: toggling the overlay *on while a building is already selected*
+leaves that one selection's vanilla highlight painted (the prefix only stops future
+calls) until the selection changes. The clean flow — toggle on, then select — is
+unaffected.
+
 ### Why these primitives (verified against the decompiled game)
 
 - **Heatmap = `HighlightSecondary`, not tile tint.** `Highlighter` exposes two

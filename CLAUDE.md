@@ -51,9 +51,18 @@ working rules.
   failure, unlike a merely stale distance (which is harmless and self-heals next
   pass). The guard converts that failure into a skip. Distance staleness is
   tolerated; district staleness is not.
-- **No Harmony, no sibling-mod integration.** Hooks in via a Bindito
-  `Configurator` + `TemplateModule.AddDecorator<DistrictCenter, CommuteOptimizer>`.
-  We intentionally do **not** integrate BeaverGenders / faction building control
+- **Harmony only as a surgical strike, never broad strokes; no sibling-mod
+  integration.** The core hooks in cleanly via a Bindito `Configurator` +
+  `TemplateModule.AddDecorator<DistrictCenter, CommuteOptimizer>` — no patching.
+  Harmony *is* now used, but only where there's no clean extension point and only
+  as narrow, flag-gated prefixes: the overlay's two suppressions of vanilla
+  selection highlights (`DistanceHeatmapShower.ShowHeatmap`,
+  `MechanicalGraphHighlightService.HighlightSelectedNode` — see
+  `Overlay/CommuteOverlayPatcher.cs`). `0Harmony.dll` is **bundled** into the mod
+  folder (no external `RequiredMods`; still removable by deleting the folder).
+  Don't reach for Harmony when a Bindito/decorator hook exists, and don't broaden
+  the patch surface (transpilers, behaviour rewrites) without being asked. We
+  intentionally do **not** integrate BeaverGenders / faction building control
   (the user doesn't run them); don't add that surface without being asked.
 - **`CommuteCost` is display-only and a free byproduct — don't let it leak into the
   algorithm.** A `CommuteCost` component is decorated onto every `Worker` and stamped
