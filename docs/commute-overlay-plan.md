@@ -136,9 +136,11 @@ unaffected.
   on the `EventBus`; dispatch via `GetComponent<Dwelling>() / <Workplace>() / <Worker>()`.
 - Toggle button: `UILayout.AddTopRightButton(root, priority)` on
   `ShowPrimaryUIEvent`, with a `Common/SquareToggle` from `VisualElementLoader`
-  (vanilla UI prefab — no asset bundle). **We ship no asset bundle**, so the toggle
-  uses no custom icon texture (vanilla checkmark + tooltip) — Keystone's
-  `BiomeOverlayToggle` loads a custom icon via its bundle; we can't and don't.
+  (vanilla UI prefab — no asset bundle). **We ship no asset bundle**, but the toggle
+  still gets a custom icon: a PNG embedded in the assembly, decoded at runtime
+  (`Overlay/EmbeddedTexture.cs`) and set as the checkmark's `backgroundImage` — the
+  same slot Keystone's `BiomeOverlayToggle` fills from its bundle, reached without
+  one. A tooltip backs it up.
 
 ## Band colours (placeholder — tune from a real CSV capture)
 

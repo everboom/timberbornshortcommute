@@ -36,6 +36,17 @@
     </Reference>
   </ItemGroup>
 
+  <!-- Overlay-toggle icon, embedded in the assembly and decoded at runtime
+       (Overlay/EmbeddedTexture.cs) into a Texture2D for the button's checkmark
+       background. Explicit LogicalName so the lookup string is stable regardless
+       of RootNamespace/folder mangling. No asset bundle — the PNG is the only
+       embedded resource. -->
+  <ItemGroup Label="Embedded icons">
+    <EmbeddedResource Include="Overlay\Icons\CommuteOverlayIcon.png">
+      <LogicalName>SylvanGames.ShortCommute.Overlay.Icons.CommuteOverlayIcon.png</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <!-- Harmony, bundled: 0Harmony.dll is deployed into the mod folder from the
        package (see DeployShortCommute). Not an external RequiredMods dependency;
        the mod stays removable by deleting the folder. GeneratePathProperty exposes

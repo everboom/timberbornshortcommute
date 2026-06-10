@@ -9,7 +9,9 @@ Full design and the verified game APIs it stands on are in
 | file | role |
 |---|---|
 | `CommuteOverlayConfigurator.cs` | `[Context("Game")]` Bindito wiring: binds the overlay singletons. No decorators (the overlay only *reads* `CommuteCost`). |
-| `CommuteOverlayToggle.cs` | `ILoadableSingleton`. The top-right `Common/SquareToggle` button; exposes `Enabled`. No custom icon (we ship no asset bundle) — vanilla checkmark + plain-text tooltip. |
+| `CommuteOverlayToggle.cs` | `ILoadableSingleton`. The top-right `Common/SquareToggle` button; exposes `Enabled`. Custom icon **without** an asset bundle: the embedded PNG, decoded by `EmbeddedTexture`, is painted onto the toggle checkmark's `backgroundImage`. Plain-text tooltip backs it up. |
+| `EmbeddedTexture.cs` | Decodes a PNG embedded in the assembly into a runtime `Texture2D` (main-thread only; loud on a missing/undecodable resource). The bundle-free way to ship a UI icon. |
+| `Icons/CommuteOverlayIcon.png` | The toggle icon (52×52 RGBA), embedded via `<EmbeddedResource>` with an explicit `LogicalName`. |
 | `CommuteOverlayRenderer.cs` | `ILoadableSingleton` + `IUpdatableSingleton`. The brain: per-frame heatmap refresh while enabled, and selection-driven line/path draws via the `EventBus` selection events. Reads `CommuteCost`; never mutates game state. Sets `CommuteOverlaySuppression.Active` and mirrors the opt-in setting into `.HidePathRange`. |
 | `CommuteLineDrawer.cs` | Pooled Unity `LineRenderer`s with a runtime URP/Unlit material per band colour. The one rendering primitive with no in-game precedent (the spike); fails loudly if the URP shader is missing. |
 | `CommuteBands.cs` | Maps a road distance to a discrete band `Color` (or `null` = no data). Cutoffs are placeholder pending a real CSV capture. |
@@ -41,7 +43,9 @@ all highlights and lines and prevents the path recompute from firing at all.
   `CommuteCost` — it's a pure consumer of data the optimizer already produces. (Its
   Harmony patches only *suppress* vanilla highlights; they mutate no game state.)
 - **No asset bundle.** Everything is code-only: vanilla UI prefabs, runtime
-  materials, the game's own highlight render pass.
+  materials, the game's own highlight render pass, and the toggle icon decoded at
+  runtime from a PNG embedded in the assembly (`EmbeddedTexture`) rather than
+  loaded from a bundle.
 - **Harmony is surgical and flag-gated.** Three prefixes, suppression only, inert
   while the overlay is off. The path-range one is additionally behind a player
   opt-in (the vanilla mesh it hides is a useful feature, just a heavy one). Don't
