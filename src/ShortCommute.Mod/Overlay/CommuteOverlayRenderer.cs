@@ -68,6 +68,7 @@ namespace SylvanGames.ShortCommute.Overlay {
     private readonly Highlighter _highlighter;
     private readonly ISpecService _specService;
     private readonly CommuteOverlaySettings _settings;
+    private readonly CommuteDataService _dataService;
     private readonly EventBus _eventBus;
 
     #endregion
@@ -103,7 +104,8 @@ namespace SylvanGames.ShortCommute.Overlay {
 
     public CommuteOverlayRenderer(CommuteOverlayToggle toggle, EntityComponentRegistry entityRegistry,
         EntitySelectionService selectionService, CommuteLineDrawer lines, Highlighter highlighter,
-        ISpecService specService, CommuteOverlaySettings settings, EventBus eventBus) {
+        ISpecService specService, CommuteOverlaySettings settings, CommuteDataService dataService,
+        EventBus eventBus) {
       _toggle = toggle;
       _entityRegistry = entityRegistry;
       _selectionService = selectionService;
@@ -111,6 +113,7 @@ namespace SylvanGames.ShortCommute.Overlay {
       _highlighter = highlighter;
       _specService = specService;
       _settings = settings;
+      _dataService = dataService;
       _eventBus = eventBus;
     }
 
@@ -121,6 +124,11 @@ namespace SylvanGames.ShortCommute.Overlay {
 
     /// <inheritdoc />
     public void UpdateSingleton() {
+      // Tell the data service to stamp CommuteCost while the overlay is on. The
+      // service gathers rows on the frame loop regardless (the shuffle needs them),
+      // but only stamps — the part the overlay reads — when something is looking.
+      // Runs even while paused, so the heatmap populates right after a load.
+      _dataService.StampingEnabled = _toggle.Enabled;
       if (_toggle.Enabled) {
         // Mirror the opt-in setting live so the path-range suppression prefix
         // (CommuteOverlayPatcher) tracks toggles without a reload.

@@ -26,13 +26,19 @@ ShortCommute keeps the same feature and the same move/swap logic, but:
    fill-free** — a swap's four distances are all column lookups in two
    already-built rows (the mover's home and the target). Road distance is
    symmetric, so the rooting direction is lossless.
-2. **Spreads work under a hard per-tick budget.** At most a couple of fresh fills
-   per tick; a worker that needs more is *deferred* (re-queued, no partial move)
-   and resumed next tick with its earlier fills still cached. No single
-   drain-everything frame.
+2. **Spreads work under a hard per-frame budget.** The distance fills run on the
+   frame loop (`CommuteDataService`) at one fill per frame; the home moves run on
+   the simulation tick and only *read* already-built rows, deferring any worker
+   whose row isn't ready yet. No single drain-everything frame.
 
 Net: per-action cost falls roughly three orders of magnitude (to cache-lookup
 territory) and per-frame cost stays flat.
+
+Splitting the read-only distance gathering (frame loop, runs even while paused)
+from the home reassignment (simulation tick) also means the **commute overlay
+populates right after a load** — before the first rebalance tick, and while the
+game is still paused. The rows are geometry (place→place), independent of who
+lives where, so a move never invalidates one; that's what makes the split safe.
 
 ## What it does (gameplay)
 
@@ -70,11 +76,11 @@ dotnet build -p:ShortCommuteDeploy=false   # build only
 ## Status — v1
 
 Ships the levers that kill the freeze (dwelling-rooted cached explorations +
-hard per-tick budget + **block clustering**: dwellings within `ClusterRadius`
+hard per-frame fill budget + **block clustering**: dwellings within `ClusterRadius`
 road-tiles share one fill) on top of a daily full pass. Each `Worker` also carries
-a display-only `CommuteCost` (its last-measured home→job road distance), stamped as
-a free byproduct of the pass — the data source for the planned **commute overlay**
-(the active next feature; see `docs/commute-overlay-plan.md`).
+a display-only `CommuteCost` (its current home→job road distance), stamped as a
+free byproduct of the frame-loop gathering — the data source for the **commute
+overlay** (see `docs/commute-overlay-plan.md`).
 
 Deliberately **deferred** (not needed to flatten the frame, added only if profiling
 shows steady-state cost matters): event-driven scheduling instead of a daily sweep,
@@ -88,8 +94,9 @@ ShortCommute.slnx
 ├── manifest.json                  mod manifest (Id SylvanGames.ShortCommute; requires eMka.ModSettings)
 ├── docs/commute-overlay-plan.md   design & handoff for the next feature (the overlay)
 └── src/ShortCommute.Mod/
-    ├── ShortCommuteConfigurator.cs  Bindito wiring — decorates DistrictCenter + Worker; binds both
-    ├── CommuteOptimizer.cs          per-district component: pass scheduling + move/swap logic
-    ├── DwellingRowCache.cs          dwelling-rooted distance rows (+ block clustering), reused per pass under a fill budget
+    ├── ShortCommuteConfigurator.cs  Bindito wiring — decorates DistrictCenter + Worker; binds the data service
+    ├── CommuteOptimizer.cs          per-district component: GatherData (rows + CommuteCost, read-only) + Tick (move/swap)
+    ├── CommuteDataService.cs        IUpdatableSingleton: drives GatherData each frame (even paused) under a shared fill budget
+    ├── DwellingRowCache.cs          dwelling-rooted distance rows (+ block clustering); pure store, built by the gatherer
     └── CommuteCost.cs               display-only per-Worker road distance, for the overlay (not read by the algorithm)
 ```

@@ -20,8 +20,12 @@ namespace SylvanGames.ShortCommute {
   }
 
   /// <summary>
-  /// Caches <see cref="DwellingRow"/>s for the current rebalance pass under a
-  /// hard per-tick measurement budget, with <b>block clustering</b>.
+  /// Caches <see cref="DwellingRow"/>s for the current rebalance pass, with
+  /// <b>block clustering</b>. A pure store: it builds and holds rows but owns no
+  /// budget — the per-frame fill ceiling lives in <see cref="CommuteDataService"/>,
+  /// which calls <see cref="BuildRow"/> only when it can afford a fill. The shuffle
+  /// (on the tick) only ever reads, via <see cref="TryGetCachedRow"/>, and never
+  /// triggers a fill.
   ///
   /// <para><b>Dwelling-rooted.</b> A road-path query is a Dijkstra flow-field
   /// fill rooted at the start node, so rooting at the dwelling yields its
@@ -40,57 +44,48 @@ namespace SylvanGames.ShortCommute {
   /// fill covers an entire housing block. (Houses spread far apart — the layout
   /// this mod exists to support — simply don't cluster and keep their own fills.)</para>
   ///
-  /// <para><b>Two lifetimes, composed.</b> Cached rows live for the whole pass
-  /// (<see cref="Clear"/> at day start); the fill counter lives for one tick
-  /// (<see cref="ResetTickCounter"/>). <see cref="TryGetRow"/> serves a hit for
-  /// free, builds-and-clusters a miss if under budget, and returns <c>null</c>
-  /// when a fresh fill is needed but the tick's budget is spent — telling the
-  /// caller to defer and resume later, with prior fills (and their clusters)
-  /// still cached.</para>
+  /// <para><b>Lifetime.</b> Cached rows live for the whole pass
+  /// (<see cref="Clear"/> at day start). Because a row is dwelling-&gt;workplace
+  /// road distance — a function of geometry, not of who lives where — moving a
+  /// beaver never invalidates a row, so the gatherer can build rows on the frame
+  /// loop while the shuffle consumes them on the tick with no coherence hazard.</para>
   /// </summary>
   internal sealed class DwellingRowCache {
 
     private readonly Dictionary<Dwelling, DwellingRow> _rows = new();
-    private readonly int _maxFillsPerTick;
     private readonly float _clusterRadius;
 
-    /// <summary>Active dwellings this tick — the pool clustering draws members from.</summary>
+    /// <summary>Active dwellings this pass — the pool clustering draws members from.</summary>
     private IReadOnlyList<Dwelling> _clusterDwellings = System.Array.Empty<Dwelling>();
 
-    public DwellingRowCache(int maxFillsPerTick, float clusterRadius) {
-      _maxFillsPerTick = maxFillsPerTick;
-      _clusterRadius = clusterRadius;
-    }
-
-    /// <summary>Fresh fills performed since the last <see cref="ResetTickCounter"/>.
-    /// One fill covers a whole cluster, so this counts clusters, not dwellings.</summary>
-    public int FillsThisTick { get; private set; }
-
-    /// <summary>Reset the per-tick fill counter (call at the start of each tick).</summary>
-    public void ResetTickCounter() => FillsThisTick = 0;
+    public DwellingRowCache(float clusterRadius) => _clusterRadius = clusterRadius;
 
     /// <summary>Drop all cached rows (call at the start of each rebalance pass).</summary>
     public void Clear() => _rows.Clear();
 
-    /// <summary>Provide the active-dwelling list used to find cluster members (call each tick).</summary>
+    /// <summary>Provide the active-dwelling list used to find cluster members (call before building).</summary>
     public void SetClusterDwellings(IReadOnlyList<Dwelling> dwellings) => _clusterDwellings = dwellings;
 
+    /// <summary>True when <paramref name="dwelling"/> already has a built row
+    /// (including one inherited as a cluster member).</summary>
+    public bool HasRow(Dwelling dwelling) => _rows.ContainsKey(dwelling);
+
+    /// <summary>The dwelling's row if built, otherwise <c>null</c>. Never fills —
+    /// this is the read-only accessor the shuffle uses; a <c>null</c> means "not
+    /// gathered yet", and the caller defers.</summary>
+    public DwellingRow? TryGetCachedRow(Dwelling dwelling) =>
+        _rows.TryGetValue(dwelling, out var row) ? row : null;
+
     /// <summary>
-    /// Return the dwelling's row. A cache hit (including a clustered member) is
-    /// free; a miss builds the row (one fill) and clusters its block, if the
-    /// per-tick budget allows, otherwise returns <c>null</c> so the caller defers.
+    /// Build (and cluster) the dwelling's row — one fill rooted at it — and cache
+    /// it. Idempotent: a dwelling that already has a row (e.g. inherited as a
+    /// cluster member) returns it without a second fill, so a caller that checked
+    /// <see cref="HasRow"/> first spends exactly one fill per call.
     /// </summary>
-    public DwellingRow? TryGetRow(Dwelling dwelling, IReadOnlyList<Workplace> workplaces) {
-      if (_rows.TryGetValue(dwelling, out var row)) {
-        return row;
-      }
-      if (FillsThisTick >= _maxFillsPerTick) {
-        return null; // budget spent this tick — caller defers; rows already built stay cached
-      }
-      row = BuildAndCluster(dwelling, workplaces);
-      FillsThisTick++;
-      return row;
-    }
+    public DwellingRow BuildRow(Dwelling dwelling, IReadOnlyList<Workplace> workplaces) =>
+        _rows.TryGetValue(dwelling, out var existing)
+            ? existing
+            : BuildAndCluster(dwelling, workplaces);
 
     private DwellingRow BuildAndCluster(Dwelling rep, IReadOnlyList<Workplace> workplaces) {
       var row = Build(rep, workplaces); // the one fill, rooted at rep

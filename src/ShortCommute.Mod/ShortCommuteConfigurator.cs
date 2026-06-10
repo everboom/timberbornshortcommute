@@ -13,13 +13,16 @@ namespace SylvanGames.ShortCommute {
   /// no Harmony (the overlay uses two narrow, flag-gated Harmony prefixes — see
   /// <c>Overlay/CommuteOverlayPatcher.cs</c>). A <see cref="CommuteCost"/> is attached to every
   /// <see cref="Worker"/> so the optimizer can stamp each beaver's measured
-  /// work-path distance for the commute overlay to read.
+  /// work-path distance for the commute overlay to read. The singleton
+  /// <see cref="CommuteDataService"/> drives every optimizer's read-only data
+  /// gathering on the frame loop (so it runs even while paused).
   /// </summary>
   [Context("Game")]
   public class ShortCommuteConfigurator : Configurator {
 
     /// <inheritdoc />
     protected override void Configure() {
+      Bind<CommuteDataService>().AsSingleton();
       Bind<CommuteOptimizer>().AsTransient();
       Bind<CommuteCost>().AsTransient();
       MultiBind<TemplateModule>().ToProvider(ProvideTemplateModule).AsSingleton();

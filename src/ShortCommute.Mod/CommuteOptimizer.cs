@@ -19,6 +19,19 @@ namespace SylvanGames.ShortCommute {
   /// close as possible by road distance to their workplace — via a direct move
   /// into a closer free dwelling, or a home swap that lowers the total commute.
   ///
+  /// <para><b>Two clocks, by responsibility.</b> The work splits in two:</para>
+  /// <list type="bullet">
+  ///   <item><b>Gathering</b> (<see cref="GatherData"/>) — building the
+  ///   dwelling-rooted distance rows and stamping each beaver's
+  ///   <see cref="CommuteCost"/>. This is read-only (no game state changes), so
+  ///   <see cref="CommuteDataService"/> drives it on the frame loop, where it runs
+  ///   even while paused — letting the overlay populate right after a load.</item>
+  ///   <item><b>Shuffling</b> (<see cref="Tick"/>) — the actual home moves and
+  ///   swaps. This mutates game state, so it stays on the simulation tick (paused
+  ///   and speed-scaled for free) and only ever <em>reads</em> already-gathered
+  ///   rows; a worker whose row isn't gathered yet simply defers to a later tick.</item>
+  /// </list>
+  ///
   /// <para>Three properties keep per-frame cost flat:</para>
   /// <list type="number">
   ///   <item><b>Cheap per action.</b> Road distances are explored once per
@@ -27,15 +40,15 @@ namespace SylvanGames.ShortCommute {
   ///   <item><b>Fill-free swaps.</b> A swap's four distances are column lookups
   ///   in two already-built rows (the mover's home and the target), so swap
   ///   evaluation never triggers a fresh exploration.</item>
-  ///   <item><b>Hard per-tick budget.</b> A tick performs at most
-  ///   <see cref="MaxFillsPerTick"/> fresh explorations; a worker that needs
-  ///   more is <em>deferred</em> — re-queued untouched and resumed next tick,
-  ///   when its earlier explorations are still cached.</item>
+  ///   <item><b>Hard per-frame fill budget.</b> Gathering performs at most
+  ///   <see cref="CommuteDataService"/>'s shared per-frame fill ceiling; rows not
+  ///   yet built simply appear over the next few frames, and any worker whose row
+  ///   isn't ready defers.</item>
   /// </list>
   ///
-  /// <para>v1 scope: a daily full pass (the queue is rebuilt on day start).
-  /// Event-driven scheduling and finer distance invalidation are future
-  /// refinements.</para>
+  /// <para>v1 scope: a daily full pass (the queue and the row cache are rebuilt on
+  /// day start). Event-driven scheduling and finer distance invalidation are
+  /// future refinements.</para>
   /// </summary>
   public class CommuteOptimizer : TickableComponent, IAwakableComponent, IStartableComponent, IFinishedStateListener {
 
@@ -46,9 +59,6 @@ namespace SylvanGames.ShortCommute {
 
     /// <summary>Minimum combined improvement for a two-beaver home swap.</summary>
     private const float MinSwapImprovement = 10f;
-
-    /// <summary>Hard ceiling on fresh dwelling explorations per tick.</summary>
-    private const int MaxFillsPerTick = 2;
 
     /// <summary>Safety cap on cheap (cache-hit) workers processed per tick.</summary>
     private const int MaxWorkersPerTick = 64;
@@ -64,6 +74,7 @@ namespace SylvanGames.ShortCommute {
     #region State
 
     private readonly EventBus _eventBus;
+    private readonly CommuteDataService _dataService;
     private DistrictCenter _districtCenter = null!;
     private readonly List<Worker> _pending = new();
 
@@ -71,7 +82,15 @@ namespace SylvanGames.ShortCommute {
     /// target set every dwelling row is measured against.</summary>
     private readonly List<Workplace> _workplaces = new();
 
-    private readonly DwellingRowCache _rows = new(MaxFillsPerTick, ClusterRadius);
+    private readonly DwellingRowCache _rows = new(ClusterRadius);
+
+    /// <summary>Reusable active-dwelling buffer, refilled by
+    /// <see cref="RefreshActiveDwellings"/> to avoid per-call allocation.</summary>
+    private readonly List<Dwelling> _activeDwellings = new();
+
+    /// <summary>True once every active dwelling has a built row — gathering has
+    /// caught up, so an idle frame can early-out instead of re-scanning.</summary>
+    private bool _rowsComplete;
 
     /// <summary>Per-worker scratch: candidate dwellings with their distance to the
     /// worker's workplace, reused to avoid per-call allocation.</summary>
@@ -79,15 +98,24 @@ namespace SylvanGames.ShortCommute {
 
     #endregion
 
-    public CommuteOptimizer(EventBus eventBus) => _eventBus = eventBus;
+    public CommuteOptimizer(EventBus eventBus, CommuteDataService dataService) {
+      _eventBus = eventBus;
+      _dataService = dataService;
+    }
 
     #region Lifecycle
 
     public void Awake() => _districtCenter = GetComponent<DistrictCenter>();
 
-    public void OnEnterFinishedState() => _eventBus.Register(this);
+    public void OnEnterFinishedState() {
+      _eventBus.Register(this);
+      _dataService.Register(this);
+    }
 
-    public void OnExitFinishedState() => _eventBus.Unregister(this);
+    public void OnExitFinishedState() {
+      _eventBus.Unregister(this);
+      _dataService.Unregister(this);
+    }
 
     [OnEvent]
     public void OnDaytimeStart(DaytimeStartEvent daytimeStart) => BeginPass();
@@ -104,6 +132,7 @@ namespace SylvanGames.ShortCommute {
     /// </summary>
     private void BeginPass() {
       _rows.Clear();
+      _rowsComplete = false;
       _workplaces.Clear();
       foreach (var worker in _districtCenter.DistrictPopulation.Adults
                    .Select(beaver => beaver.GetComponent<Worker>())
@@ -118,15 +147,100 @@ namespace SylvanGames.ShortCommute {
       }
     }
 
+    #endregion
+
+    #region Data gathering (read-only; driven by CommuteDataService on the frame loop)
+
+    /// <summary>
+    /// Build any not-yet-explored dwelling rows (at most <paramref name="fillBudget"/>
+    /// fresh fills) and, when <paramref name="stamp"/> is set, stamp every employed
+    /// adult's <see cref="CommuteCost"/> from them. Read-only: no homes are moved.
+    /// Returns the number of fresh fills spent so the caller can share a budget
+    /// across districts.
+    /// </summary>
+    public int GatherData(int fillBudget, bool stamp) {
+      if (_workplaces.Count == 0) {
+        return 0; // nothing employed to measure (also the pre-Start state)
+      }
+      var needRows = _pending.Count > 0 || stamp;
+      if (_rowsComplete && !needRows) {
+        return 0; // idle: rows are warm and nobody is reading them this frame
+      }
+
+      RefreshActiveDwellings();
+      _rows.SetClusterDwellings(_activeDwellings);
+
+      var used = 0;
+      var complete = true;
+      foreach (var dwelling in _activeDwellings) {
+        if (_rows.HasRow(dwelling)) {
+          continue;
+        }
+        if (used < fillBudget) {
+          _rows.BuildRow(dwelling, _workplaces);
+          used++;
+        } else {
+          complete = false; // more rows remain; pick them up next frame
+        }
+      }
+      _rowsComplete = complete;
+
+      if (stamp) {
+        StampCommuteCosts();
+      }
+      return used;
+    }
+
+    /// <summary>
+    /// Stamp each employed adult of this district with its current home-&gt;job road
+    /// distance, read from its home's already-built row. A worker whose home row
+    /// isn't built yet keeps its prior reading (staleness over a "no data" flicker);
+    /// a worker whose home is measured but whose job is unreachable is cleared to
+    /// "no data". Cross-district residents are skipped (the same guard the shuffle
+    /// uses), since this district's rows don't carry their job's column.
+    /// </summary>
+    private void StampCommuteCosts() {
+      foreach (var beaver in _districtCenter.DistrictPopulation.Adults) {
+        var worker = beaver.GetComponent<Worker>();
+        if (worker is not { Employed: true }) {
+          continue;
+        }
+        var workplace = worker.Workplace;
+        if (workplace == null
+            || workplace.GetComponent<DistrictBuilding>()?.District != _districtCenter) {
+          continue;
+        }
+        var cost = worker.GetComponent<CommuteCost>();
+        if (cost == null) {
+          continue;
+        }
+        var dweller = worker.GetComponent<Dweller>();
+        if (dweller == null || !dweller.HasHome || dweller.Home == null) {
+          continue;
+        }
+        var row = _rows.TryGetCachedRow(dweller.Home);
+        if (row == null) {
+          continue; // home not explored yet — keep the prior reading (no flicker)
+        }
+        if (row.Distances.TryGetValue(workplace, out var distance)) {
+          cost.Set(distance);
+        } else {
+          cost.Clear(); // home measured but job unreachable → genuine no-data
+        }
+      }
+    }
+
+    #endregion
+
+    #region Shuffle (simulation tick; consumes gathered rows, never fills)
+
     /// <inheritdoc />
     public override void Tick() {
       if (_pending.Count == 0) {
         return;
       }
-      _rows.ResetTickCounter();
-      var dwellings = GetActiveDwellings(_districtCenter);
-      _rows.SetClusterDwellings(dwellings);
-      var districtOverpopulated = DistrictOverpopulatedByAdults(_districtCenter, dwellings);
+      RefreshActiveDwellings();
+      var districtOverpopulated = DistrictOverpopulatedByAdults(_districtCenter, _activeDwellings);
 
       var processed = 0;
       while (_pending.Count > 0 && processed < MaxWorkersPerTick) {
@@ -139,10 +253,10 @@ namespace SylvanGames.ShortCommute {
           continue;
         }
 
-        // A deferred worker ran out of exploration budget mid-evaluation. Leave it
-        // at the front (untouched — no move was applied) and resume next tick, when
-        // the rows it already built are cached.
-        TryImprove(worker, dwellings, districtOverpopulated, out var deferred);
+        // A worker whose ranking needs a row the frame-loop gatherer hasn't built
+        // yet defers: leave it at the front (untouched — no move applied) and resume
+        // next tick, by when gathering has very likely caught up.
+        TryImprove(worker, _activeDwellings, districtOverpopulated, out var deferred);
         if (deferred) {
           break;
         }
@@ -158,9 +272,9 @@ namespace SylvanGames.ShortCommute {
     /// <summary>
     /// Try to move <paramref name="worker"/> to a closer home (direct move or
     /// swap). Returns true if a reassignment was applied. Sets
-    /// <paramref name="deferred"/> when ranking needs a dwelling exploration the
-    /// per-tick budget can't afford — nothing is changed and the caller should
-    /// retry the worker next tick.
+    /// <paramref name="deferred"/> when ranking needs a dwelling row the gatherer
+    /// hasn't built yet — nothing is changed and the caller should retry the worker
+    /// next tick.
     /// </summary>
     private bool TryImprove(Worker worker, List<Dwelling> dwellings, bool districtOverpopulated,
         out bool deferred) {
@@ -191,7 +305,7 @@ namespace SylvanGames.ShortCommute {
       // column lookup in the home dwelling's row.
       var currentDistance = float.MaxValue;
       if (dweller.HasHome && home != null) {
-        var homeRow = _rows.TryGetRow(home, _workplaces);
+        var homeRow = _rows.TryGetCachedRow(home);
         if (homeRow == null) {
           deferred = true;
           return false;
@@ -205,11 +319,11 @@ namespace SylvanGames.ShortCommute {
       var aggressive = districtOverpopulated && home is { OverpopulatedByAdults: true };
 
       // Rank candidate dwellings by distance to this workplace. Every active
-      // dwelling's row is needed to find the nearest; if any can't be built within
-      // this tick's budget, defer the whole worker (rows built so far stay cached).
+      // dwelling's row is needed to find the nearest; if any isn't gathered yet,
+      // defer the whole worker (rows built so far stay cached).
       _candidates.Clear();
       foreach (var dwelling in dwellings) {
-        var row = _rows.TryGetRow(dwelling, _workplaces);
+        var row = _rows.TryGetCachedRow(dwelling);
         if (row == null) {
           deferred = true;
           return false;
@@ -222,12 +336,10 @@ namespace SylvanGames.ShortCommute {
 
       foreach (var (dwelling, distance) in _candidates) {
         if (dwelling == home) {
-          RecordCommute(worker, currentDistance); // staying put: own home is already closest
           return false; // reached our own home in nearest-first order: nothing closer remains
         }
         var improvement = currentDistance - distance;
         if (improvement < MinMoveImprovement) {
-          RecordCommute(worker, currentDistance); // no worthwhile move: keep current commute
           return false; // sorted nearest-first, so every remaining dwelling is at least as far
         }
 
@@ -237,7 +349,6 @@ namespace SylvanGames.ShortCommute {
             home!.UnassignDweller(dweller);
           }
           dwelling.AssignDweller(dweller);
-          RecordCommute(worker, distance); // moved: new commute is this candidate's distance
           return true;
         }
 
@@ -249,18 +360,10 @@ namespace SylvanGames.ShortCommute {
         // inconvenienced). Fill-free — all distances are lookups in rows we have.
         var partner = FindSwapCandidate(home!, dwelling, improvement, aggressive);
         if (partner != null) {
-          // home's row is cached (built when we read currentDistance above), so the
-          // partner's post-swap commute — they take our home — is a free lookup.
-          var homeRow = _rows.TryGetRow(home!, _workplaces);
           SwapHomes(dweller, partner);
-          RecordCommute(worker, distance); // worker now lives in the target dwelling
-          if (homeRow != null) {
-            RecordPartnerCommute(partner, homeRow); // partner now lives in our old home
-          }
           return true;
         }
       }
-      RecordCommute(worker, currentDistance); // exhausted candidates, nothing applied
       return false;
     }
 
@@ -275,9 +378,9 @@ namespace SylvanGames.ShortCommute {
     private Dweller? FindSwapCandidate(Dwelling home, Dwelling target, float workerImprovement,
         bool aggressive) {
       // Both rows are already cached: 'home' from the current-commute lookup, 'target'
-      // from the candidate ranking. TryGetRow returns them without a new fill.
-      var homeRow = _rows.TryGetRow(home, _workplaces);
-      var targetRow = _rows.TryGetRow(target, _workplaces);
+      // from the candidate ranking. TryGetCachedRow returns them without a new fill.
+      var homeRow = _rows.TryGetCachedRow(home);
+      var targetRow = _rows.TryGetCachedRow(target);
       if (homeRow == null || targetRow == null) {
         return null;
       }
@@ -321,50 +424,6 @@ namespace SylvanGames.ShortCommute {
 
     #endregion
 
-    #region Overlay data
-
-    /// <summary>
-    /// Stamp <paramref name="worker"/>'s <see cref="CommuteCost"/> with its freshly
-    /// settled home→workplace road distance, for the commute overlay to read.
-    /// <see cref="float.MaxValue"/> (no home / unreachable) is recorded as "no data".
-    /// Display-only and never read back by the optimizer; a worker missing the
-    /// component (it shouldn't — the decorator adds it to every <see cref="Worker"/>)
-    /// is simply skipped rather than crashing the tick over a cosmetic value.
-    /// </summary>
-    private static void RecordCommute(Worker worker, float roadDistance) {
-      var cost = worker.GetComponent<CommuteCost>();
-      if (cost == null) {
-        return;
-      }
-      if (roadDistance >= float.MaxValue) {
-        cost.Clear();
-      } else {
-        cost.Set(roadDistance);
-      }
-    }
-
-    /// <summary>
-    /// After a swap, stamp the partner's new commute: they have moved into
-    /// <paramref name="newHome"/>, so their home→job distance is a lookup of their
-    /// workplace column in that home's already-built row. An unemployed partner, or
-    /// a child swapped in aggressive mode (no <see cref="Worker"/>), records nothing.
-    /// </summary>
-    private static void RecordPartnerCommute(Dweller partner, DwellingRow newHome) {
-      var partnerWorker = partner.GetComponent<Worker>();
-      if (partnerWorker == null) {
-        return;
-      }
-      var partnerWorkplace = partnerWorker.Workplace;
-      var distance = float.MaxValue;
-      if (partnerWorkplace != null
-          && newHome.Distances.TryGetValue(partnerWorkplace, out var d)) {
-        distance = d;
-      }
-      RecordCommute(partnerWorker, distance);
-    }
-
-    #endregion
-
     #region District helpers
 
     // Active = enabled, not paused, and not blocked. A blocked dwelling
@@ -378,11 +437,18 @@ namespace SylvanGames.ShortCommute {
     // orthogonal to commute and would block our improving moves. (Bob's HousingOptimize
     // calls it only because it evicts everyone first, making it a no-op.) It's also
     // internal. The blocked check below is the only part of vanilla's gate worth taking.
-    private static List<Dwelling> GetActiveDwellings(DistrictCenter center) =>
-        center.DistrictBuildingRegistry.GetEnabledBuildingsInstant<Dwelling>()
-            .Where(dwelling => dwelling.GetComponent<PausableBuilding>() is not { Paused: true }
-                               && dwelling.GetComponent<BlockableObject>() is not { IsUnblocked: false })
-            .ToList();
+    private void RefreshActiveDwellings() {
+      _activeDwellings.Clear();
+      foreach (var dwelling in _districtCenter.DistrictBuildingRegistry.GetEnabledBuildingsInstant<Dwelling>()) {
+        if (dwelling.GetComponent<PausableBuilding>() is { Paused: true }) {
+          continue;
+        }
+        if (dwelling.GetComponent<BlockableObject>() is { IsUnblocked: false }) {
+          continue;
+        }
+        _activeDwellings.Add(dwelling);
+      }
+    }
 
     private static bool DistrictOverpopulatedByAdults(DistrictCenter center, List<Dwelling> dwellings) =>
         CountAdultBeavers(center) - dwellings.Sum(dwelling => dwelling.AdultSlots) > 0;

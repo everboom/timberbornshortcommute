@@ -35,10 +35,21 @@ working rules.
   it's that it re-fills per worker with no cache; the cache + per-tick budget are
   the real fixes.
 - **The fill is the only expensive operation.** Lookups against a built row are
-  free. The per-tick budget is denominated in *fills* (`MaxFillsPerTick`), not
-  workers; cache-hit workers flow freely. A worker that needs an unaffordable
-  fill *defers* (re-queued untouched, resumed next tick) — so the budget is a
-  hard ceiling, not a between-workers suggestion.
+  free. The fill budget is denominated in *fills* (`MaxFillsPerFrame`, in
+  `CommuteDataService`), not workers. A worker whose row isn't built yet *defers*
+  (re-queued untouched, resumed next tick) — so the budget is a hard ceiling, not
+  a between-workers suggestion.
+- **Gather off the tick, shuffle on it (don't merge them back).** Two clocks by
+  responsibility: building distance rows and stamping `CommuteCost` is *read-only*,
+  so `CommuteDataService` (an `IUpdatableSingleton`) drives `CommuteOptimizer.GatherData`
+  on the **frame loop** — which runs even while paused, so the overlay populates
+  right after a load, before the first tick. The home moves/swaps are *mutation*,
+  so they stay in `Tick` (pause-gated and speed-scaled for free) and only ever
+  *read* already-gathered rows (`DwellingRowCache.TryGetCachedRow` never fills).
+  This split is safe because a row is geometry (dwelling→workplace distance),
+  independent of occupancy, so a move never invalidates one. Don't move the
+  mutation to Update (framerate-coupled, unpaused gameplay) or fold gathering back
+  into the tick (re-blanks the overlay until a pass runs, and won't run while paused).
 - **Homes only.** Never reassign `Workplace`. All mutation goes through vanilla
   `Dwelling.Assign/UnassignDweller`, so saves stay valid and the mod is
   removable.
@@ -79,16 +90,17 @@ working rules.
   being asked.
 - **`CommuteCost` is display-only and a free byproduct — don't let it leak into the
   algorithm.** A `CommuteCost` component is decorated onto every `Worker` and stamped
-  by the optimizer at `TryImprove`'s settle/move/swap exits with the beaver's
-  home→workplace road distance (a lookup it already has — no extra fills). It exists
-  purely for the planned commute overlay; the move/swap logic must never read it
-  back. Two deliberate inaccuracies, both documented in its XML doc and acceptable
-  *only because it's display*: (1) **block-resolution** — under clustering it's the
-  cluster rep's distance (±`ClusterRadius`), so same-block houses report identical
-  values; the overlay must use colour bands wider than the radius and reserve exact
-  per-beaver numbers for an on-select recompute. (2) **last-rebalance-stale** — it's
-  not reset at pass start (no flicker to "no data"), so it can lag a day. Not
-  persisted (recomputed each pass), so saves carry nothing new.
+  by `CommuteOptimizer.GatherData` (on the frame loop, while the overlay is active)
+  with the beaver's current home→workplace road distance (a lookup it already has —
+  no extra fills). It exists purely for the commute overlay; the move/swap logic
+  must never read it back. Two deliberate inaccuracies, both documented in its XML
+  doc and acceptable *only because it's display*: (1) **block-resolution** — under
+  clustering it's the cluster rep's distance (±`ClusterRadius`), so same-block houses
+  report identical values; the overlay must use colour bands wider than the radius and
+  reserve exact per-beaver numbers for an on-select recompute. (2) **frame-stale** —
+  it tracks current homes but lags a move by a frame, and a beaver whose home row
+  isn't built yet keeps its prior reading (no flicker to "no data"). Not persisted
+  (recomputed on the frame loop), so saves carry nothing new.
 
 ## Build / deploy
 
